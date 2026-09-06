@@ -29,10 +29,7 @@ def _cast_bool(value: bool | str | None) -> bool:  # noqa: FBT001
 
 RUNNING_IN_TERMUX = _cast_bool(os.getenv("TERMUX_VERSION") or "com.termux" in os.getenv("PREFIX", sys.prefix))
 FORCE_PORTRAIT_MODE = _cast_bool(_env("PORTRAIT_MODE") or RUNNING_IN_TERMUX)
-
-
 DEBUG_LOG_FOLDER = _env("DEBUG_LOG_FOLDER")
-
 MAX_LOG_MSG_LENGTH = int(_env("MAX_LOG_MSG_LENGTH") or 0) or 5_000
 DEBUG_MODE = _cast_bool(
     _env("DEBUG_MODE")
@@ -50,18 +47,19 @@ WRITE_JSON_UI = int(_env("WRITE_JSON_UI") or 0) or None
 FFMPEG_FIX_HLS = _cast_bool(_env("FFMPEG_FIX_HLS"))
 EDITOR = os.getenv("EDITOR")
 CI = _cast_bool(os.getenv("CI"))
-
-# CRAWLERS
-
-FILEDITCH_WAIT = int(_env("FILEDITCH_WAIT") or 20)
-GOFILE_SALT = _env("GOFILE_SALT")
 TERMUX = {
     k.removeprefix("TERMUX_APP_").removeprefix("TERMUX_").lstrip("_"): v
     for k, v in os.environ.items()
     if k.startswith("TERMUX_")
 }
 
+
+# CRAWLERS
+
+FILEDITCH_WAIT = int(_env("FILEDITCH_WAIT") or 20)
+GOFILE_SALT = _env("GOFILE_SALT")
+
 ALL_VARS = dict(sorted(ALL_VARS.items()))  # pyright: ignore[reportConstantRedefinition]
 ALL_VARS_RESOLVED = dict(
-    sorted((k, v) for k, v in globals().items() if k not in {"os", "hashlib", "ALL_VARS"} and not k.startswith("_"))
+    sorted((k, v) for k, v in globals().items() if k != "ALL_VARS" and not k.startswith("_") and k.upper() == k)
 )
