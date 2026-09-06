@@ -188,7 +188,7 @@ class DownloadClient:
     async def download_file(self, domain: str, media_item: MediaItem) -> bool:
         """Starts a file."""
         if self.config.downloads.skip_and_mark_completed and not media_item.is_segment:
-            logger.info(f"Download removed {media_item.url} due to mark completed option")
+            logger.info(f"Download skipped {media_item.url} due to `--skip-and-mark-completed` option")
             self.manager.scrape_mapper.tui.files.stats.skipped += 1
             # set completed path
             await self.mark_completed(media_item, domain)

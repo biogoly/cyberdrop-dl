@@ -97,7 +97,7 @@ class EagerTaskGroup(asyncio.TaskGroup):
         return self.create_task(coro, name=name, context=context, eager_start=True)
 
 
-@dataclasses.dataclass(slots=True, eq=False)
+@dataclasses.dataclass(frozen=True, slots=True, eq=False)
 class TaskManager:
     logs: EagerTaskGroup = dataclasses.field(default_factory=EagerTaskGroup)
     scrape: EagerTaskGroup = dataclasses.field(default_factory=EagerTaskGroup)
@@ -119,6 +119,10 @@ class _AsyncChain:
             async for value in a_iterable:
                 yield value
 
+    @staticmethod
+    async def yield_this[T](obj: T) -> AsyncGenerator[T]:
+        yield obj
+
 
 chain = _AsyncChain()
 
@@ -134,13 +138,10 @@ async def peek_first[T](async_iterable: AsyncIterable[T], /) -> tuple[T, AsyncGe
     async_iterator = aiter(async_iterable)
     first = await next(async_iterator)
 
-    async def yield_again() -> AsyncGenerator[T, None]:
-        yield first
-
-    return first, chain(yield_again(), async_iterator)
+    return first, chain(chain.yield_this(first), async_iterator)
 
 
-@dataclasses.dataclass(slots=True, eq=False)
+@dataclasses.dataclass(frozen=True, slots=True, eq=False)
 class WeakAsyncLocks[T]:
     """A WeakValueDictionary wrapper for asyncio.Locks.
 
@@ -199,12 +200,8 @@ class AsyncIOWrapper[AnyStr: (bytes, str)]:
         return await asyncio.to_thread(self._io.close)
 
     async def __aiter__(self) -> AsyncIterator[AnyStr]:
-        while True:
-            line = await self.readline()
-            if line:
-                yield line
-            else:
-                break
+        while line := await self.readline():
+            yield line
 
     async def read(self, size: int = -1) -> AnyStr:
         return await asyncio.to_thread(self._io.read, size)
@@ -275,7 +272,7 @@ async def safe_gather[T1, T2, T3](
 ) -> Sequence[T1 | T2 | T3]:
     """Like `asyncio.gather(*coros, return_exceptions=True)`, but all exceptions are re-raised as an ExceptionGroup
 
-    This makes errors deterministic"""
+    In the same order as they were scheduled. This makes errors deterministic"""
 
     coros = filter(None, (coro_1, coro_2, coro_3))
     results = await asyncio.gather(*coros, return_exceptions=True)  # noqa: TID251
@@ -341,27 +338,41 @@ async def map_tuples[*Ts, R](
     """Map an async factory over a sequence of arguments with optional concurrency cap.
 
     If `task_limit` is given, no more than that many coroutines will be “in flight” at the same time,
-    limiting memory pressure and event loop overhead"""
-    if not task_limit:
+    limiting memory pressure and event loop overhead
+
+    If task_limit is an asyncio.Semaphore, it can be shared across multiple `map_tuples` calls"""
+
+    if task_limit is None:
         return await gather(*(coro_factory(*params) for params in params_batched))
 
-    semaphore = asyncio.BoundedSemaphore(task_limit) if isinstance(task_limit, int) else task_limit
+    if isinstance(task_limit, int):
+        if task_limit < 1:
+            raise ValueError("task limit must be >= 1")
+        semaphore = asyncio.BoundedSemaphore(task_limit)
+    else:
+        semaphore = task_limit
 
-    tasks: list[asyncio.Task[R]] = []
+    results: dict[int, R] = {}
 
-    async def run(coro: Awaitable[R]) -> R:
+    async def run(idx: int, coro: Awaitable[R]) -> None:
         try:
-            return await coro
+            results[idx] = await coro
         finally:
             semaphore.release()
 
     async with asyncio.TaskGroup() as tg:
-        for params in params_batched:
-            _ = await semaphore.acquire()
-            coro = coro_factory(*params)
-            tasks.append(tg.create_task(run(coro)))
+        pending = enumerate(params_batched)
+        while True:
+            await semaphore.acquire()
+            try:
+                idx, params = builtins.next(pending)
+            except StopIteration:
+                semaphore.release()
+                break
+            else:
+                tg.create_task(run(idx, coro_factory(*params)))
 
-    return [t.result() for t in tasks]
+    return [result for _, result in sorted(results.items())]
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
