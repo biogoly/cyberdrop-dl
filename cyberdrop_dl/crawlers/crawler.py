@@ -892,10 +892,36 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
 
     @final
     @contextlib.asynccontextmanager
-    async def new_task_group(self, scrape_item: ScrapeItem | AbsoluteHttpURL) -> AsyncGenerator[aio.EagerTaskGroup]:
-        async with aio.EagerTaskGroup() as tg:
-            with self.catch_errors(scrape_item):
-                yield tg
+    async def new_task_group(self) -> AsyncGenerator[aio.EagerTaskGroup]:
+        """A taskgroup that does not cancel its tasks if an exception is raised within its `async with` context
+
+        Exceptions raised within a task will still cancel all tasks
+
+        This is mostly just to catch `MaxChildrenError`"""
+
+        context_exc = None
+        task_exc = None
+
+        try:
+            async with aio.EagerTaskGroup() as tg:
+                try:
+                    yield tg
+                except Exception as e:  # noqa: BLE001
+                    context_exc = e
+        except ExceptionGroup as eg:
+            if context_exc is None:
+                raise
+            task_exc = eg
+
+        try:
+            if task_exc is not None and context_exc is not None:
+                raise ExceptionGroup(task_exc.message, (*task_exc.exceptions, context_exc)) from None
+            if task_exc is not None:
+                raise task_exc from None
+            if context_exc is not None:
+                raise context_exc from None
+        finally:
+            context_exc = task_exc = None
 
     @final
     @classmethod
